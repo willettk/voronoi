@@ -1,0 +1,279 @@
+
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Voronoi-ing the UK Astronomy Clubs</title>
+<style>
+
+@import url(css/maps.css);
+
+path {
+  stroke-linejoin: round;
+}
+
+.land {
+  fill: #ccc;
+}
+
+.countries {
+  fill: none;
+  stroke: #fff;
+}
+
+.voronoi {
+  fill-opacity: .3;
+  stroke: #000;
+  stroke-width: .5px;
+  pointer-events: all;
+}
+
+.voronoi:hover {
+  fill: #ff0 !important;
+}
+
+.points {
+  pointer-events: none;
+}
+
+.remote-radius {
+  stroke: #f00;
+  stroke-width: 1.5px;
+  fill: none;
+}
+
+.graticule {
+  stroke: #999;
+  stroke-width: .5px;
+  fill: none;
+}
+
+.outline {
+  stroke: #000;
+  stroke-width: 1.5px;
+  fill: none;
+}
+
+#remote-point-coordinates, #remote-point-distance, #remote-club-coordinates, #remote-club-distance {
+  font-weight: bold;
+}
+
+.remote .voronoi {
+  stroke: none;
+  fill: none !important;
+}
+
+.remote .voronoi:hover {
+  stroke: #000;
+  fill: #ff0 !important;
+}
+
+p.cite {
+  text-align: center;
+}
+
+</style>
+
+<h1>Astronomy Clubs in the UK</h1>
+
+<div id="map"></div>
+<p class="cite">213 astronomy clubs in the UK from <a href="http://www.astronomyclubs.co.uk/Clubs/Counties.aspx">astronomyclubs.co.uk</a>.
+
+<div class="wrapper">
+  <p>Each region is closer to a particular club than any other.
+  This partitioning of the sphere is a spherical <a href="http://en.wikipedia.org/wiki/Voronoi_diagram">Voronoi diagram</a>, and was calculated by <code>d3.geo.voronoi</code>.
+
+  <h2>Most Remote Point</h2>
+  <p>The point at <span id="remote-point-coordinates">…</span> is furthest away from any club in the above dataset; <span id="remote-point-distance">…</span> from the nearest three clubs.
+</div>
+
+<div id="remote-point"></div>
+
+<div class="wrapper">
+  <p>This is the <a href="http://mathworld.wolfram.com/Circumcenter.html">circumcentre</a> of the <a href="http://en.wikipedia.org/wiki/Delaunay_triangulation">Delaunay triangle</a> with the largest <a href="http://mathworld.wolfram.com/Circumcircle.html">circumcircle</a> radius.
+</div>
+
+<div class="wrapper">
+  <h2>Most Remote Club</h2>
+  <p><span id="remote-club-name">…</span> at <span id="remote-club-coordinates">…</span> is the most remote; <span id="remote-club-distance"></span> from the nearest club, <span id="remote-club-neighbour"></span>.
+</div>
+
+<div id="remote-club"></div>
+
+<div class="wrapper">
+  <p>Related: Mike Bostock’s <a href="http://bl.ocks.org/mbostock/4360892">U.S. Airports Voronoi</a>.
+</div>
+
+<script src="javascript/d3.min.js"></script>
+<script src="javascript/queue.min.js"></script>
+<script src="javascript/topojson.min.js"></script>
+<script src="javascript/d3.geo.zoom.js"></script>
+<script src="javascript/d3.geo.voronoi.js"></script>
+<script>
+
+var degrees = 180 / Math.PI,
+    format = d3.format(",f");
+
+var radius = 960 / 2,
+    smallRadius = 500 / 2;
+
+var projection = d3.geo.orthographic()
+    .clipAngle(90)
+    .precision(.1)
+    .translate([radius, radius])
+    .scale(radius - 1)
+    .rotate([85, -15]);
+
+var path = d3.geo.path()
+    .projection(projection)
+    .pointRadius(1);
+
+var orthographicSvg = d3.selectAll("#map").append("svg")
+    .attr("width", radius * 2)
+    .attr("height", radius * 2);
+
+var remoteSvg = d3.selectAll("#remote-point, #remote-club").append("svg")
+    .attr("class", "remote")
+    .attr("width", smallRadius * 2)
+    .attr("height", smallRadius * 2);
+
+var svg = d3.selectAll("svg").data([path, null, null]);
+
+var fill = d3.scale.category20b();
+
+queue()
+    .defer(d3.json, "geojson/world-50m.json")
+    .defer(d3.csv, "data/uk/uk_latlon.csv")
+    .await(ready);
+
+function ready(error, world, clubs) {
+  svg.append("path")
+      .datum(topojson.feature(world, world.objects.land))
+      .attr("class", "land");
+
+  svg.append("path")
+      .datum(topojson.mesh(world, world.objects.countries, function(a, b) { return a !== b; }))
+      .attr("class", "countries");
+
+  remoteSvg.append("path")
+      .datum(d3.geo.graticule())
+      .attr("class", "graticule");
+
+  var names = clubs.map(function(d) { return d.name; });
+  clubs = clubs.map(function(d) { return [+d.longitude, +d.latitude]; });
+
+  var multiPoint = {type: "MultiPoint", coordinates: clubs};
+
+  svg.append("path")
+      .datum(multiPoint)
+      .attr("class", "points");
+
+  svg.each(redraw);
+
+  var delaunay = d3.geo.delaunay(clubs),
+      voronoi = d3.geo.voronoi(clubs, delaunay).geometries;
+
+  var remotePoint,
+      remoteRadius = -Infinity;
+  delaunay.forEach(function(d) {
+    if (d.centre.radius > remoteRadius) {
+      remoteRadius = (remotePoint = d.centre).radius;
+    }
+  });
+  remotePoint = spherical(remotePoint);
+  d3.select("#remote-point-coordinates").text(formatPoint(remotePoint));
+  d3.select("#remote-point-distance").text(format(remoteRadius * 6378.1) + "km");
+
+  var remoteClub,
+      remoteDistance = -Infinity,
+      remoteNeighbour;
+  voronoi.forEach(function(d, i) {
+    if (!d) return;
+    var point = clubs[i],
+        neighbors = d.neighbors,
+        minDistance = Infinity,
+        minNeighbour;
+    for (var j = 0, n = neighbors.length; j < n; ++j) {
+      var distance = d3.geo.distance(point, clubs[neighbors[j]]);
+      if (distance < minDistance) minDistance = distance, minNeighbour = neighbors[j];
+    }
+    if (minDistance > remoteDistance) remoteClub = i, remoteDistance = minDistance, remoteNeighbour = minNeighbour;
+  });
+
+  d3.select("#remote-club-name").text(names[remoteClub]);
+  d3.select("#remote-club-coordinates").text(formatPoint(clubs[remoteClub]));
+  d3.select("#remote-club-distance").text(format(remoteDistance * 6378.1) + "km");
+  d3.select("#remote-club-neighbour").text(names[remoteNeighbour]);
+
+  remoteSvg.data([
+        {origin: remotePoint, radius: remoteRadius},
+        {origin: clubs[remoteClub], radius: remoteDistance}
+      ].map(function(d, i) {
+        return d3.geo.path()
+            .projection(d3.geo.azimuthalEquidistant()
+              .clipAngle(90)
+              .translate([smallRadius, smallRadius])
+              .scale(smallRadius * 2 / Math.PI - 1)
+              .precision(.1)
+              .rotate([-d.origin[0], -d.origin[1]]))
+            .pointRadius(1.5);
+      }));
+
+  var circle = d3.geo.circle();
+
+  var g = remoteSvg.append("g")
+      .data([
+        {origin: remotePoint, radius: remoteRadius},
+        {origin: clubs[remoteClub], radius: remoteDistance}
+      ]);
+
+  g.append("path")
+      .datum(function(d) {
+        return circle.angle(d.radius * degrees).origin(d.origin)();
+      })
+      .attr("class", "remote-radius");
+
+  g.append("path")
+      .datum(function(d) {
+        return {type: "Point", coordinates: d.origin};
+      })
+      .attr("class", "remote-radius");
+
+  remoteSvg.append("path")
+      .datum({type: "Sphere"})
+      .attr("class", "outline");
+
+  svg.selectAll(".voronoi")
+      .data(voronoi)
+    .enter().insert("path", ".points")
+      .attr("class", "voronoi")
+      .style("fill", function(d) { return d ? fill(d.color = d3.max(d.neighbors, function(n) { return voronoi[n].color; }) + 1 | 0) : null; })
+    .append("title")
+      .text(function(_, i) { return names[i]; });
+
+  svg.each(redraw);
+
+  orthographicSvg.call(d3.geo.zoom()
+      .projection(projection)
+      .scaleExtent([projection.scale(), projection.scale() * 8])
+      .on("zoom.redraw", function() {
+        d3.event.sourceEvent.preventDefault();
+        orthographicSvg.each(redraw);
+      }));
+}
+
+function redraw(path) {
+  if (path) d3.select(this).selectAll("path").attr("d", path);
+}
+
+function spherical(cartesian) {
+  return [
+    Math.atan2(cartesian[1], cartesian[0]) * degrees,
+    Math.asin(cartesian[2]) * degrees
+  ];
+}
+
+function formatPoint(o) {
+  return format(Math.abs(o[1])) + "°" + (o[1] > 0 ? "N" : "S") + ", " + format(Math.abs(o[0])) + "°" + (o[0] > 0 ? "E" : "W");
+}
+
+</script>
+

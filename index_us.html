@@ -1,0 +1,80 @@
+
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+
+path {
+  stroke-linejoin: round;
+}
+
+.land {
+  fill: #ddd;
+}
+
+.states {
+  fill: none;
+  stroke: #fff;
+}
+
+.voronoi {
+  fill: none;
+  stroke: blue;
+  stroke-width: .5px;
+}
+
+</style>
+<body>
+<script src="http://d3js.org/d3.v3.min.js"></script>
+<script src="http://d3js.org/queue.v1.min.js"></script>
+<script src="http://d3js.org/topojson.v1.min.js"></script>
+<script>
+
+var width = 1100,
+    height = 600;
+
+var projection = d3.geo.albers();
+
+var path = d3.geo.path()
+    .projection(projection)
+    .pointRadius(1.0);
+
+var svg = d3.select("body").append("svg")
+    .attr("width", width)
+    .attr("height", height);
+
+queue()
+    .defer(d3.json, "us.json")
+    .defer(d3.tsv, "astro_latlon_us.tsv")
+    .await(ready);
+
+function ready(error, us, astrolocs) {
+  svg.append("path")
+      .datum(topojson.feature(us, us.objects.land))
+      .attr("class", "land")
+      .attr("d", path);
+
+  svg.append("path")
+      .datum(topojson.mesh(us, us.objects.states, function(a, b) { return a !== b; }))
+      .attr("class", "states")
+      .attr("d", path);
+    
+  svg.append("path")
+      .datum({type: "MultiPoint", coordinates: astrolocs})
+      .attr("class", "points")
+      .attr("d", path);
+
+  svg.append("path")
+      .datum(d3.geom.voronoi(astrolocs.map(projection)))
+      .attr("class", "voronoi")
+      .attr("d", function(d) { return "M" + d.map(function(d) { return d.join("L"); }).join("ZM") + "Z"; });
+
+  svg.append("text")
+      .attr("x", 30)             
+      .attr("y", -100)
+      .attr("text-anchor", "middle")  
+      .style("font-size", "16px") 
+      .style("text-decoration", "underline")  
+      .text("Astronomy Degree-Granting Institutions in the US");
+}
+
+</script>
