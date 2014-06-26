@@ -43,8 +43,8 @@ var svg = d3.select("body").append("svg")
     .attr("height", height);
 
 queue()
-    .defer(d3.json, "us.json")
-    .defer(d3.tsv, "astro_latlon_us.tsv")
+    .defer(d3.json, "geojson/us.json")
+    .defer(d3.tsv, "data/us/us_latlon.tsv")
     .await(ready);
 
 function ready(error, us, astrolocs) {
