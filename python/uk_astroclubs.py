@@ -7,7 +7,7 @@ from geopy.geocoders import GoogleV3
 geolocator = GoogleV3()
 
 root_url = 'http://www.astronomyclubs.co.uk/Clubs/Details.aspx?ClubId='
-nums = arange(300)+1
+nums = [n + 1 for n in range(300)]
 
 addresses = []
 names = []
@@ -31,12 +31,24 @@ for n in nums:
 
 # Geocode addresses to get lat,lon and write to file
 
-with open('data/uk/uk_latlon.csv','w') as f:
+results = []
+uk_countries = ('United Kingdom','Guernsey','Jersey','Isle of Man')
+
+with open('../data/uk/uk_latlon.csv','w') as f:
+    # Header line
     f.write('name,latitude,longitude\n')
     for a,n in zip(addresses,names):
         result = geolocator.geocode(a,region='uk')
         if result is not None:
-            f.write('%s,%f,%f\n' % (n,result.latitude,result.longitude))
+            # Check to make sure geocoding is accurate for the UK
+            for r in result.raw['address_components']:
+                if r['types'][0] == 'country':
+                    country = r['long_name']
+                    if country in uk_countries:
+                        # Write acceptable rows to file
+                        f.write('%s,%f,%f\n' % (n,result.latitude,result.longitude))
+                    else:
+                        print '%s in %s improperly geocoded for %s' % (n,a,country)
         # Limit for Google API is 10 requests per second
         time.sleep(0.2)
 
